@@ -1,0 +1,45 @@
+Passo 1: Abrir o PowerShell na pasta correta
+No seu computador, abra o menu Iniciar e digite PowerShell. Abra-o.
+
+Digite o seguinte comando (exatamente assim, com as aspas) e aperte ENTER:
+
+PowerShell
+
+cd "C:\Users\Fernando e Dan\Desktop\appdrivermoto\appusermoto\tomazelashop-main"
+(Isso faz o terminal "entrar" na pasta do seu projeto).
+
+Passo 2: Configurar o Firebase (Se ainda não fez nessa pasta)
+Se você já instalou o Firebase antes, pule para o Passo 3. Se não, digite:
+
+npm install -g firebase-tools (Se der erro, você precisa instalar o Node.js antes).
+
+firebase login (Faça login com sua conta Google).
+
+Passo 3: Iniciar o Projeto
+Digite este comando e aperte ENTER:
+
+PowerShell
+
+firebase init hosting
+Agora responda às perguntas com cuidado:
+
+Are you ready to proceed? -> Digite Y e Enter.
+
+Please select an option: -> Selecione Use an existing project (Use as setas) e Enter.
+
+Select a default Firebase project: -> Escolha ubermotoconchas e Enter.
+
+What do you want to use as your public directory? -> Digite . (apenas um ponto final) e Enter. (MUITO IMPORTANTE).
+
+Configure as a single-page app? -> Digite N e Enter.
+
+Set up automatic builds with GitHub? -> Digite N e Enter.
+
+File index.html already exists. Overwrite? -> Digite N (NÃO! Se colocar Sim, ele apaga seu código).
+
+Passo 4: Enviar para a Internet (Deploy)
+Depois de configurar, digite o comando final:
+
+PowerShell
+
+firebase deploy
