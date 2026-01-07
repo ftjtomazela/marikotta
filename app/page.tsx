@@ -88,7 +88,7 @@ export default function Home() {
                 <img 
                   src="/logo.png" 
                   alt="Marikota Logo" 
-                  className="h-28 w-auto object-contain drop-shadow-sm hover:scale-105 transition-transform" 
+                  className="h-58 w-auto object-contain drop-shadow-sm hover:scale-105 transition-transform" 
                 />
              </Link>
           </div>
