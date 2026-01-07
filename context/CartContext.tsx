@@ -2,78 +2,107 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 
-// Define o formato do produto
-interface Product {
+export interface CartItem {
   id: string;
   title: string;
   price: number;
   image_url?: string;
+  description?: string;
   quantity: number;
+  weight?: number;
 }
 
 interface CartContextType {
-  items: Product[];
+  items: CartItem[];
   addToCart: (product: any) => void;
   removeFromCart: (id: string) => void;
   clearCart: () => void;
   cartTotal: number;
+  // <--- NOVAS FUNÇÕES PARA O FRETE
+  shippingCost: number;
+  shippingType: string;
+  addShippingCost: (cost: number, type: string) => void;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<Product[]>([]);
+  const [items, setItems] = useState<CartItem[]>([]);
+  const [mounted, setMounted] = useState(false);
+  
+  // <--- NOVO ESTADO DO FRETE
+  const [shippingCost, setShippingCost] = useState(0);
+  const [shippingType, setShippingType] = useState("");
 
-  // 1. Carregar carrinho salvo ao abrir o site
   useEffect(() => {
-    const savedCart = localStorage.getItem("@marikota:cart");
+    const savedCart = localStorage.getItem("marikota-cart");
     if (savedCart) {
       setItems(JSON.parse(savedCart));
     }
+    setMounted(true);
   }, []);
 
-  // 2. Salvar carrinho sempre que mudar
   useEffect(() => {
-    localStorage.setItem("@marikota:cart", JSON.stringify(items));
-  }, [items]);
+    if (mounted) {
+      localStorage.setItem("marikota-cart", JSON.stringify(items));
+    }
+  }, [items, mounted]);
 
-  // Função de Adicionar
   const addToCart = (product: any) => {
     setItems((prev) => {
-      const existing = prev.find((p) => p.id === product.id);
-      // Se já existe, aumenta a quantidade
+      const existing = prev.find((item) => item.id === product.id);
       if (existing) {
-        return prev.map((p) =>
-          p.id === product.id ? { ...p, quantity: p.quantity + 1 } : p
+        return prev.map((item) =>
+          item.id === product.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
         );
       }
-      // Se não existe, adiciona novo com qtd 1
       return [...prev, { ...product, quantity: 1 }];
     });
   };
 
-  // Função de Remover
   const removeFromCart = (id: string) => {
     setItems((prev) => prev.filter((item) => item.id !== id));
   };
 
-  // Função de Limpar (usada no sucesso)
   const clearCart = () => {
     setItems([]);
-    localStorage.removeItem("@marikota:cart");
+    setShippingCost(0); // Limpa o frete também
+    setShippingType("");
   };
 
-  // Calcula o Total
-  const cartTotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
+  // <--- NOVA FUNÇÃO PARA DEFINIR FRETE
+  const addShippingCost = (cost: number, type: string) => {
+    setShippingCost(cost);
+    setShippingType(type);
+  };
+
+  // O total agora soma os produtos + o frete escolhido
+  const cartTotal = items.reduce(
+    (total, item) => total + item.price * item.quantity,
+    0
+  ) + shippingCost;
 
   return (
-    <CartContext.Provider value={{ items, addToCart, removeFromCart, clearCart, cartTotal }}>
+    <CartContext.Provider
+      value={{ 
+        items, 
+        addToCart, 
+        removeFromCart, 
+        clearCart, 
+        cartTotal,
+        // Exportando as novidades
+        shippingCost,
+        shippingType,
+        addShippingCost
+      }}
+    >
       {children}
     </CartContext.Provider>
   );
 }
 
-// Hook para usar o carrinho em qualquer lugar
 export function useCart() {
   const context = useContext(CartContext);
   if (!context) {
