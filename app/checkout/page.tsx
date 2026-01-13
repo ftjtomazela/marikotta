@@ -13,6 +13,8 @@ export default function CheckoutPage() {
   // --- ESTADOS DO CLIENTE (Formulário Real) ---
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
+  // NOVO: CPF é obrigatório para Pagar.me
+  const [cpf, setCpf] = useState(""); 
   const [celular, setCelular] = useState("");
   const [rua, setRua] = useState("");
   const [numero, setNumero] = useState("");
@@ -21,11 +23,15 @@ export default function CheckoutPage() {
   const [complemento, setComplemento] = useState("");
 
   // --- ESTADOS DO FRETE ---
+  const [modoEntrega, setModoEntrega] = useState<"entrega" | "retirada">("entrega"); 
   const [cep, setCep] = useState("");
   const [loadingFrete, setLoadingFrete] = useState(false);
   const [opcoesFrete, setOpcoesFrete] = useState<any[]>([]);
   const [freteSelecionado, setFreteSelecionado] = useState<any>(null);
   const [loadingPagamento, setLoadingPagamento] = useState(false);
+
+  // --- NOVO: ESTADO DO MÉTODO DE PAGAMENTO ---
+  const [metodoPagamento, setMetodoPagamento] = useState<"credit_card" | "pix">("credit_card");
 
   // --- ANIMAÇÃO DO CARRINHO ---
   const [showAnimation, setShowAnimation] = useState(false);
@@ -47,6 +53,37 @@ export default function CheckoutPage() {
       return () => clearTimeout(timer);
     }
   }, [items]);
+
+  // Efeito para configurar retirada automaticamente
+  useEffect(() => {
+    if (modoEntrega === "retirada") {
+        setFreteSelecionado({
+            id: "retirada_local",
+            name: "Retirar no Local",
+            price: "0.00",
+            delivery_time: "1",
+            company: { 
+                name: "Marikota", 
+                picture: "https://cdn-icons-png.flaticon.com/512/684/684809.png"
+            }
+        });
+        // Limpa campos de endereço
+        setCep("");
+        setRua("");
+        setNumero("");
+        setBairro("");
+        setCidade("");
+        setOpcoesFrete([]);
+    } else {
+        setFreteSelecionado(null); // Reseta se voltar para entrega
+    }
+  }, [modoEntrega]);
+
+  // --- CÁLCULO DE TOTAIS (NOVO) ---
+  // Calcula o valor dos produtos com desconto se for Pix
+  const valorProdutos = metodoPagamento === "pix" ? cartTotal * 0.95 : cartTotal;
+  const valorFrete = freteSelecionado ? parseFloat(freteSelecionado.price) : 0;
+  const valorTotalFinal = valorProdutos + valorFrete;
 
   // --- 1. LÓGICA DE FRETE ---
   async function calcularFrete(cepDigitado: string) {
@@ -76,11 +113,13 @@ export default function CheckoutPage() {
       });
       const data = await res.json();
 
+      let opcoes = [];
       if (Array.isArray(data)) {
-        const validos = data.filter((f: any) => !f.error);
-        setOpcoesFrete(validos);
-        if (validos.length > 0) setFreteSelecionado(validos[0]);
+        opcoes = data.filter((f: any) => !f.error);
+        setOpcoesFrete(opcoes);
+        if (opcoes.length > 0) setFreteSelecionado(opcoes[0]);
       }
+
     } catch (error) {
       console.error("Erro frete:", error);
       alert("Erro ao calcular frete. Tente novamente.");
@@ -95,21 +134,48 @@ export default function CheckoutPage() {
     if (valor.length === 8) calcularFrete(valor);
   };
 
+  // --- FORMATADORES ---
+  const formatarCPF = (valor: string) => {
+    return valor
+      .replace(/\D/g, '')
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d{1,2})/, '$1-$2')
+      .replace(/(-\d{2})\d+?$/, '$1');
+  };
+
+  const handleCpfChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setCpf(formatarCPF(e.target.value));
+  };
+
   async function handleFinalizarCompra() {
     // Validações básicas
-    if (!nome || !email || !rua || !numero || !cep || !bairro) {
-      return alert("Por favor, preencha todos os dados de entrega.");
+    if (modoEntrega === "entrega") {
+        if (!nome || !email || !rua || !numero || !cep || !bairro || !cpf) {
+            return alert("Por favor, preencha todos os dados de entrega e o CPF.");
+        }
+    } else {
+        if (!nome || !email || !celular || !cpf) {
+            return alert("Preencha seus dados de contato e CPF.");
+        }
     }
-    if (!freteSelecionado) {
+    
+    if (!freteSelecionado && modoEntrega === "entrega") {
       return alert("Selecione uma opção de frete antes de pagar.");
     }
 
     setLoadingPagamento(true);
 
     try {
-      // 1. Primeiro salva o pedido no banco
+      // 1. Prepara os itens (Aplica desconto no preço unitário se for Pix)
+      const itemsParaEnvio = items.map(item => ({
+        ...item,
+        price: metodoPagamento === "pix" ? item.price * 0.95 : item.price
+      }));
+
+      // 2. Primeiro salva o pedido no banco
       const orderData = {
-        items: items,
+        items: itemsParaEnvio, // Salva com o preço real pago
         shipping: {
           price: freteSelecionado.price,
           service_id: freteSelecionado.id,
@@ -117,19 +183,21 @@ export default function CheckoutPage() {
           delivery_time: freteSelecionado.delivery_time
         },
         shipping_address: {
-          cep,
-          rua,
-          numero,
-          complemento,
-          bairro,
+          cep: modoEntrega === "retirada" ? "00000-000" : cep,
+          rua: modoEntrega === "retirada" ? "Retirada" : rua,
+          numero: modoEntrega === "retirada" ? "0" : numero,
+          complemento: modoEntrega === "retirada" ? "" : complemento,
+          bairro: modoEntrega === "retirada" ? "Loja" : bairro,
           cidade: cidade || "São Paulo",
           estado: "SP"
         },
         comprador: { 
           nome, 
           email, 
-          celular 
-        }
+          celular,
+          cpf
+        },
+        metodo_pagamento: metodoPagamento // Salva qual foi a escolha
       };
 
       // Salvar pedido no banco
@@ -145,15 +213,19 @@ export default function CheckoutPage() {
         orderId = orderResult.orderId;
       }
 
-      // 2. Criar checkout no Mercado Pago
+      // 3. Criar checkout no Mercado Pago (Pagar.me)
       const response = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: items,
+          items: itemsParaEnvio, // Envia itens já com desconto se for Pix
           frete: freteSelecionado.price,
-          comprador: { nome, email, celular },
-          order_id: orderId
+          comprador: { 
+             nome, email, celular, cpf,
+             rua, numero, bairro, cidade, cep, estado: "SP"
+          },
+          order_id: orderId,
+          payment_method: metodoPagamento // <--- Envia a escolha para o backend restringir
         })
       });
 
@@ -174,8 +246,6 @@ export default function CheckoutPage() {
       setLoadingPagamento(false);
     }
   }
-
-  const valorTotal = cartTotal + (freteSelecionado ? parseFloat(freteSelecionado.price) : 0);
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8 font-josefin-sophia">
@@ -200,74 +270,16 @@ export default function CheckoutPage() {
       )}
 
       <style jsx>{`
-        @keyframes slideInRight {
-          from {
-            transform: translateX(100%);
-            opacity: 0;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
-        }
-        
-        .animate-slideInRight {
-          animation: slideInRight 0.5s ease-out;
-        }
-        
-        @keyframes float {
-          0%, 100% {
-            transform: translateY(0);
-          }
-          50% {
-            transform: translateY(-10px);
-          }
-        }
-        
-        .animate-float {
-          animation: float 2s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-          0%, 100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.7;
-          }
-        }
-        
-        .animate-pulse-slow {
-          animation: pulse 2s infinite;
-        }
-        
-        @keyframes slideUp {
-          from {
-            transform: translateY(20px);
-            opacity: 0;
-          }
-          to {
-            transform: translateY(0);
-            opacity: 1;
-          }
-        }
-        
-        .animate-slideUp {
-          animation: slideUp 0.6s ease-out;
-        }
-        
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
-        
-        .animate-fadeIn {
-          animation: fadeIn 0.8s ease-out;
-        }
+        @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .animate-slideInRight { animation: slideInRight 0.5s ease-out; }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+        .animate-float { animation: float 2s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .animate-pulse-slow { animation: pulse 2s infinite; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .animate-slideUp { animation: slideUp 0.6s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .animate-fadeIn { animation: fadeIn 0.8s ease-out; }
       `}</style>
 
       <div className="max-w-6xl mx-auto">
@@ -368,7 +380,25 @@ export default function CheckoutPage() {
                       required
                     />
                   </div>
+                  
+                  {/* CAMPO CPF */}
                   <div className="transition-all duration-300 hover:scale-[1.01]">
+                    <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
+                      <i className="fa-solid fa-id-card text-pink-500 text-xs"></i>
+                      CPF (Obrigatório) *
+                    </label>
+                    <input 
+                      type="text" 
+                      value={cpf}
+                      onChange={handleCpfChange}
+                      placeholder="000.000.000-00" 
+                      maxLength={14}
+                      className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
+                      required
+                    />
+                  </div>
+
+                  <div className="transition-all duration-300 hover:scale-[1.01] col-span-full">
                     <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
                       <i className="fa-solid fa-phone text-pink-500 text-xs"></i>
                       Celular *
@@ -386,185 +416,217 @@ export default function CheckoutPage() {
               </div>
             </div>
 
-            {/* 2. ENDEREÇO DE ENTREGA */}
+            {/* 2. ENTREGA (ABAS DE ESCOLHA) */}
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 transition-all duration-300 hover:shadow-md hover:border-pink-100 animate-slideUp" style={{ animationDelay: "0.1s" }}>
               <div className="flex items-center gap-3 mb-6">
                 <span className="bg-gradient-to-r from-purple-500 to-purple-600 text-white w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shadow-lg shadow-purple-200 animate-slideUp">
                   2
                 </span>
                 <div>
-                  <h2 className="font-bold text-gray-800 text-xl">Endereço de Entrega</h2>
-                  <p className="text-sm text-gray-500">Onde entregaremos sua compra</p>
+                  <h2 className="font-bold text-gray-800 text-xl">Entrega</h2>
+                  <p className="text-sm text-gray-500">Como você quer receber?</p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
-                <div className="transition-all duration-300 hover:scale-[1.01]">
-                  <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
-                    <i className="fa-solid fa-map-pin text-pink-500 text-xs"></i>
-                    CEP *
-                  </label>
-                  <div className="relative">
-                    <input 
-                      type="text" 
-                      placeholder="00000-000" 
-                      maxLength={9}
-                      value={cep.replace(/(\d{5})(\d{3})/, "$1-$2")}
-                      onChange={handleCepChange}
-                      className="w-full border-2 border-pink-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 font-bold text-gray-700 bg-white pr-12 transition-all duration-300" 
-                    />
-                    {loadingFrete && (
-                      <div className="absolute right-4 top-4">
-                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-pink-500"></div>
-                      </div>
-                    )}
-                    <div className="absolute right-4 top-4 text-gray-400">
-                      <i className="fa-solid fa-truck"></i>
-                    </div>
-                  </div>
-                  {loadingFrete && (
-                    <div className="mt-2 flex items-center gap-2 text-pink-600 font-medium text-sm">
-                      <div className="w-2 h-2 bg-pink-500 rounded-full animate-pulse"></div>
-                      Buscando opções de frete...
-                    </div>
-                  )}
-                </div>
-                <div className="transition-all duration-300 hover:scale-[1.01]">
-                  <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
-                    <i className="fa-solid fa-city text-pink-500 text-xs"></i>
-                    Cidade
-                  </label>
-                  <input 
-                    type="text" 
-                    value={cidade}
-                    onChange={(e) => setCidade(e.target.value)}
-                    placeholder="Sua cidade"
-                    className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
-                  />
-                </div>
+              {/* SELETOR DE MODO (BOTÕES GRANDES) */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                  <button 
+                    onClick={() => setModoEntrega("entrega")}
+                    className={`p-4 rounded-xl border-2 flex flex-col items-center justify-center gap-2 transition-all ${
+                        modoEntrega === "entrega" 
+                        ? "border-pink-500 bg-pink-50 text-pink-600 font-bold shadow-md" 
+                        : "border-gray-100 text-gray-500 hover:border-pink-200"
+                    }`}
+                  >
+                      <i className="fa-solid fa-truck text-2xl"></i>
+                      <span>Receber em Casa</span>
+                  </button>
+                  <button 
+                    onClick={() => setModoEntrega("retirada")}
+                    className={`p-4 rounded-xl border-2 flex flex-col items-center justify-center gap-2 transition-all ${
+                        modoEntrega === "retirada" 
+                        ? "border-purple-500 bg-purple-50 text-purple-600 font-bold shadow-md" 
+                        : "border-gray-100 text-gray-500 hover:border-purple-200"
+                    }`}
+                  >
+                      <i className="fa-solid fa-store text-2xl"></i>
+                      <span>Retirar na Loja</span>
+                  </button>
               </div>
 
-              {/* OPÇÕES DE FRETE ANIMADAS */}
-              {opcoesFrete.length > 0 && (
-                <div className="mt-6 mb-8 p-5 bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl border border-green-200 shadow-sm animate-fadeIn">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center animate-pulse-slow">
-                      <i className="fa-solid fa-rocket text-white"></i>
-                    </div>
-                    <div>
-                      <p className="font-bold text-green-800 text-lg">Escolha o envio:</p>
-                      <p className="text-sm text-green-600">Selecione a melhor opção para você</p>
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-3">
-                    {opcoesFrete.map((frete, index) => (
-                      <div 
-                        key={frete.id}
-                        onClick={() => setFreteSelecionado(frete)}
-                        className={`flex justify-between items-center p-4 rounded-xl border cursor-pointer transition-all duration-300 transform hover:scale-[1.02] ${
-                          freteSelecionado?.id === frete.id 
-                          ? "bg-gradient-to-r from-pink-50 to-pink-100 border-pink-300 ring-4 ring-pink-100 shadow-lg" 
-                          : "bg-white border-gray-200 hover:border-green-300 hover:shadow-md"
-                        } animate-slideUp`}
-                        style={{ animationDelay: `${index * 0.1}s` }}
-                      >
-                        <div className="flex items-center gap-4">
-                          {frete.company?.picture ? (
-                            <img src={frete.company.picture} alt={frete.name} className="h-8 w-auto" />
-                          ) : (
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                              freteSelecionado?.id === frete.id 
-                              ? "bg-pink-500 text-white" 
-                              : "bg-green-100 text-green-600"
-                            }`}>
-                              <i className="fa-solid fa-box text-lg"></i>
+              {/* CONTEÚDO MUDANDO CONFORME A ESCOLHA */}
+              {modoEntrega === "entrega" ? (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5 animate-fadeIn">
+                        <div className="transition-all duration-300 hover:scale-[1.01]">
+                        <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
+                            <i className="fa-solid fa-map-pin text-pink-500 text-xs"></i>
+                            CEP *
+                        </label>
+                        <div className="relative">
+                            <input 
+                            type="text" 
+                            placeholder="00000-000" 
+                            maxLength={9}
+                            value={cep.replace(/(\d{5})(\d{3})/, "$1-$2")}
+                            onChange={handleCepChange}
+                            className="w-full border-2 border-pink-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 font-bold text-gray-700 bg-white pr-12 transition-all duration-300" 
+                            />
+                            {loadingFrete && (
+                            <div className="absolute right-4 top-4">
+                                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-pink-500"></div>
                             </div>
-                          )}
-                          <div>
-                            <p className="font-bold text-gray-800">{frete.name}</p>
-                            <p className="text-xs text-gray-500 flex items-center gap-1">
-                              <i className="fa-solid fa-clock"></i>
-                              Chega em {frete.delivery_time} dias úteis
-                            </p>
-                          </div>
+                            )}
+                            <div className="absolute right-4 top-4 text-gray-400">
+                            <i className="fa-solid fa-truck"></i>
+                            </div>
                         </div>
-                        <div className="text-right">
-                          <p className="font-bold text-lg text-gray-800">R$ {parseFloat(frete.price).toFixed(2).replace('.', ',')}</p>
-                          {freteSelecionado?.id === frete.id && (
-                            <p className="text-xs text-pink-600 font-medium mt-1 flex items-center justify-end gap-1">
-                              <i className="fa-solid fa-check-circle"></i>
-                              Selecionado
-                            </p>
-                          )}
                         </div>
+                        <div className="transition-all duration-300 hover:scale-[1.01]">
+                        <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
+                            <i className="fa-solid fa-city text-pink-500 text-xs"></i>
+                            Cidade
+                        </label>
+                        <input 
+                            type="text" 
+                            value={cidade}
+                            onChange={(e) => setCidade(e.target.value)}
+                            placeholder="Sua cidade"
+                            className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
+                        />
+                        </div>
+                    </div>
+
+                    {/* OPÇÕES DE FRETE ANIMADAS */}
+                    {opcoesFrete.length > 0 && (
+                        <div className="mt-4 mb-6 animate-fadeIn space-y-3">
+                            <p className="text-sm text-gray-500 font-medium">Selecione o frete:</p>
+                            {opcoesFrete.map((frete, index) => (
+                            <div 
+                                key={frete.id}
+                                onClick={() => setFreteSelecionado(frete)}
+                                className={`flex justify-between items-center p-4 rounded-xl border cursor-pointer transition-all duration-300 transform hover:scale-[1.02] ${
+                                freteSelecionado?.id === frete.id 
+                                ? "bg-gradient-to-r from-pink-50 to-pink-100 border-pink-300 ring-4 ring-pink-100 shadow-lg" 
+                                : "bg-white border-gray-200 hover:border-green-300 hover:shadow-md"
+                                } animate-slideUp`}
+                                style={{ animationDelay: `${index * 0.1}s` }}
+                            >
+                                <div className="flex items-center gap-4">
+                                {frete.company?.picture ? (
+                                    <img src={frete.company.picture} alt={frete.name} className="h-8 w-auto" />
+                                ) : (
+                                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                                    freteSelecionado?.id === frete.id 
+                                    ? "bg-pink-500 text-white" 
+                                    : "bg-green-100 text-green-600"
+                                    }`}>
+                                    <i className="fa-solid fa-box text-lg"></i>
+                                    </div>
+                                )}
+                                <div>
+                                    <p className="font-bold text-gray-800">{frete.name}</p>
+                                    <p className="text-xs text-gray-500 flex items-center gap-1">
+                                    <i className="fa-solid fa-clock"></i>
+                                    Chega em {frete.delivery_time} dias úteis
+                                    </p>
+                                </div>
+                                </div>
+                                <div className="text-right">
+                                <p className="font-bold text-lg text-gray-800">
+                                    {parseFloat(frete.price) === 0 ? <span className="text-green-600">Grátis</span> : `R$ ${parseFloat(frete.price).toFixed(2).replace('.', ',')}`}
+                                </p>
+                                {freteSelecionado?.id === frete.id && (
+                                    <p className="text-xs text-pink-600 font-medium mt-1 flex items-center justify-end gap-1">
+                                    <i className="fa-solid fa-check-circle"></i>
+                                    Selecionado
+                                    </p>
+                                )}
+                                </div>
+                            </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* CAMPOS DE ENDEREÇO */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-5 animate-fadeIn">
+                        <div className="md:col-span-3 transition-all duration-300 hover:scale-[1.01]">
+                        <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
+                            <i className="fa-solid fa-road text-pink-500 text-xs"></i>
+                            Rua / Avenida *
+                        </label>
+                        <input 
+                            type="text" 
+                            value={rua}
+                            onChange={(e) => setRua(e.target.value)}
+                            placeholder="Nome da rua"
+                            className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
+                            required
+                        />
+                        </div>
+                        <div className="transition-all duration-300 hover:scale-[1.01]">
+                        <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
+                            <i className="fa-solid fa-hashtag text-pink-500 text-xs"></i>
+                            Número *
+                        </label>
+                        <input 
+                            type="text" 
+                            value={numero}
+                            onChange={(e) => setNumero(e.target.value)}
+                            placeholder="123"
+                            className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
+                            required
+                        />
+                        </div>
+                        
+                        <div className="col-span-full grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div className="transition-all duration-300 hover:scale-[1.01]">
+                            <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
+                            <i className="fa-solid fa-compass text-pink-500 text-xs"></i>
+                            Bairro *
+                            </label>
+                            <input 
+                            type="text" 
+                            value={bairro}
+                            onChange={(e) => setBairro(e.target.value)}
+                            placeholder="Seu bairro"
+                            className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
+                            required
+                            />
+                        </div>
+                        <div className="transition-all duration-300 hover:scale-[1.01]">
+                            <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
+                            <i className="fa-solid fa-building text-pink-500 text-xs"></i>
+                            Complemento
+                            </label>
+                            <input 
+                            type="text" 
+                            value={complemento}
+                            onChange={(e) => setComplemento(e.target.value)}
+                            placeholder="Apto, bloco, etc."
+                            className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
+                            />
+                        </div>
+                        </div>
+                    </div>
+                  </>
+              ) : (
+                  <div className="bg-purple-50 border border-purple-200 rounded-xl p-6 text-center animate-fadeIn">
+                      <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4 text-purple-600 text-2xl">
+                          <i className="fa-solid fa-shop"></i>
                       </div>
-                    ))}
+                      <h3 className="font-bold text-purple-800 text-lg mb-2">Você selecionou Retirada</h3>
+                      <p className="text-gray-600 mb-4">
+                          Após a confirmação do pagamento, seu pedido será separado e avisaremos quando estiver pronto para retirada.
+                      </p>
+                      <div className="bg-white p-3 rounded-lg border border-purple-100 inline-block text-left">
+                          <p className="font-bold text-gray-700 text-sm mb-1">📍 Endereço da Loja:</p>
+                          <p className="text-gray-500 text-sm">Rua Exemplo, 123 - Centro</p>
+                          <p className="text-gray-500 text-sm">Conchas - SP</p>
+                      </div>
                   </div>
-                </div>
               )}
 
-              {/* CAMPOS DE ENDEREÇO */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-5">
-                <div className="md:col-span-3 transition-all duration-300 hover:scale-[1.01]">
-                  <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
-                    <i className="fa-solid fa-road text-pink-500 text-xs"></i>
-                    Rua / Avenida *
-                  </label>
-                  <input 
-                    type="text" 
-                    value={rua}
-                    onChange={(e) => setRua(e.target.value)}
-                    placeholder="Nome da rua"
-                    className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
-                    required
-                  />
-                </div>
-                <div className="transition-all duration-300 hover:scale-[1.01]">
-                  <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
-                    <i className="fa-solid fa-hashtag text-pink-500 text-xs"></i>
-                    Número *
-                  </label>
-                  <input 
-                    type="text" 
-                    value={numero}
-                    onChange={(e) => setNumero(e.target.value)}
-                    placeholder="123"
-                    className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
-                    required
-                  />
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div className="transition-all duration-300 hover:scale-[1.01]">
-                  <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
-                    <i className="fa-solid fa-compass text-pink-500 text-xs"></i>
-                    Bairro *
-                  </label>
-                  <input 
-                    type="text" 
-                    value={bairro}
-                    onChange={(e) => setBairro(e.target.value)}
-                    placeholder="Seu bairro"
-                    className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
-                    required
-                  />
-                </div>
-                <div className="transition-all duration-300 hover:scale-[1.01]">
-                  <label className="block text-sm text-gray-500 mb-2 flex items-center gap-1">
-                    <i className="fa-solid fa-building text-pink-500 text-xs"></i>
-                    Complemento
-                  </label>
-                  <input 
-                    type="text" 
-                    value={complemento}
-                    onChange={(e) => setComplemento(e.target.value)}
-                    placeholder="Apto, bloco, etc."
-                    className="w-full border-2 border-gray-100 rounded-xl p-4 outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-50 transition-all duration-300 text-gray-700 placeholder-gray-400 font-medium" 
-                  />
-                </div>
-              </div>
             </div>
           </div>
 
@@ -614,31 +676,89 @@ export default function CheckoutPage() {
                           <p className="text-xs text-gray-500">R$ {item.price.toFixed(2)} cada</p>
                         </div>
                       </div>
-                      <span className="font-bold text-gray-800 text-lg">R$ {(item.price * item.quantity).toFixed(2).replace('.', ',')}</span>
+                      <span className="font-bold text-gray-800 text-lg">
+                        {/* Se for PIX, mostramos visualmente o valor já com desconto? Não, melhor manter o padrão e dar desconto no final */}
+                        R$ {(item.price * item.quantity).toFixed(2).replace('.', ',')}
+                      </span>
                     </div>
                   ))
                 )}
+              </div>
+
+              {/* --- NOVO: SELEÇÃO DE PAGAMENTO --- */}
+              <div className="mb-6 space-y-3">
+                <p className="font-bold text-gray-700 text-sm">Forma de Pagamento:</p>
+                
+                {/* Opção Cartão */}
+                <label className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${metodoPagamento === 'credit_card' ? 'border-pink-500 bg-pink-50 ring-1 ring-pink-500' : 'border-gray-200 hover:border-pink-200'}`}>
+                    <div className="flex items-center gap-3">
+                        <input 
+                            type="radio" 
+                            name="pagamento" 
+                            className="w-4 h-4 text-pink-600 focus:ring-pink-500"
+                            checked={metodoPagamento === 'credit_card'}
+                            onChange={() => setMetodoPagamento('credit_card')}
+                        />
+                        <div>
+                            <span className="block font-bold text-gray-800 text-sm">Cartão de Crédito</span>
+                            <span className="text-xs text-gray-500">Até 3x sem juros</span>
+                        </div>
+                    </div>
+                    <i className="fa-regular fa-credit-card text-pink-500 text-xl"></i>
+                </label>
+
+                {/* Opção PIX */}
+                <label className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${metodoPagamento === 'pix' ? 'border-green-500 bg-green-50 ring-1 ring-green-500' : 'border-gray-200 hover:border-green-200'}`}>
+                    <div className="flex items-center gap-3">
+                        <input 
+                            type="radio" 
+                            name="pagamento" 
+                            className="w-4 h-4 text-green-600 focus:ring-green-500"
+                            checked={metodoPagamento === 'pix'}
+                            onChange={() => setMetodoPagamento('pix')}
+                        />
+                        <div>
+                            <span className="block font-bold text-gray-800 text-sm">Pix</span>
+                            <span className="text-xs text-green-600 font-bold">5% de Desconto</span>
+                        </div>
+                    </div>
+                    <i className="fa-brands fa-pix text-green-600 text-xl"></i>
+                </label>
               </div>
 
               <div className="border-t border-gray-100 pt-5 space-y-4 mb-6">
                 <div className="flex justify-between items-center">
                   <span className="text-gray-600 font-medium">Subtotal</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-gray-800 font-bold text-lg">R$ {cartTotal.toFixed(2).replace('.', ',')}</span>
+                    <span className={`text-gray-800 font-bold text-lg ${metodoPagamento === 'pix' ? 'line-through text-gray-400 text-sm' : ''}`}>
+                        R$ {cartTotal.toFixed(2).replace('.', ',')}
+                    </span>
                   </div>
                 </div>
+
+                {/* Se for PIX, mostra o desconto */}
+                {metodoPagamento === 'pix' && (
+                    <div className="flex justify-between items-center text-green-600">
+                        <span className="font-medium text-sm">Desconto Pix (5%)</span>
+                        <span className="font-bold">- R$ {(cartTotal * 0.05).toFixed(2).replace('.', ',')}</span>
+                    </div>
+                )}
                 
                 <div className="flex justify-between items-center">
                   <span className="text-gray-600 font-medium">Frete</span>
                   {freteSelecionado ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-green-600 font-bold text-lg animate-pulse-slow">+ R$ {parseFloat(freteSelecionado.price).toFixed(2).replace('.', ',')}</span>
+                      <span className="text-green-600 font-bold text-lg animate-pulse-slow">
+                          {parseFloat(freteSelecionado.price) === 0 ? "GRÁTIS" : `+ R$ ${parseFloat(freteSelecionado.price).toFixed(2).replace('.', ',')}`}
+                      </span>
                       <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                     </div>
                   ) : opcoesFrete.length === 0 ? (
                     <div className="flex items-center gap-2 text-gray-400">
                       <i className="fa-solid fa-map-marker-alt"></i>
-                      <span>Digite o CEP</span>
+                      <span>
+                          {modoEntrega === "retirada" ? "Retirada na Loja" : "Digite o CEP"}
+                      </span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 animate-pulse-slow">
@@ -657,13 +777,18 @@ export default function CheckoutPage() {
                 </div>
                 <div className="text-right">
                   <span className="font-bold text-3xl text-transparent bg-gradient-to-r from-pink-600 to-purple-600 bg-clip-text animate-pulse-slow">
-                    R$ {valorTotal.toFixed(2).replace('.', ',')}
+                    R$ {valorTotalFinal.toFixed(2).replace('.', ',')}
                   </span>
                   <div className="flex items-center justify-end gap-1 mt-1">
+                    {/* Se for Cartão, mostra parcela */}
+                    {metodoPagamento === 'credit_card' && (
+                        <span className="text-xs text-gray-500 mr-2">
+                            ou 3x de R$ {(valorTotalFinal / 3).toFixed(2).replace('.', ',')}
+                        </span>
+                    )}
                     <div className="w-1 h-1 bg-pink-500 rounded-full animate-pulse"></div>
                     <div className="w-1 h-1 bg-pink-500 rounded-full animate-pulse" style={{ animationDelay: "0.2s" }}></div>
                     <div className="w-1 h-1 bg-pink-500 rounded-full animate-pulse" style={{ animationDelay: "0.4s" }}></div>
-                    <span className="text-xs text-gray-500 ml-2">Valor final</span>
                   </div>
                 </div>
               </div>
@@ -703,7 +828,7 @@ export default function CheckoutPage() {
                   </div>
                   <div>
                     <p className="font-bold text-green-800">Pagamento 100% Seguro</p>
-                    <p className="text-xs text-green-600">Processado pelo Mercado Pago</p>
+                    <p className="text-xs text-green-600">Processado pela Pagar.me</p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between text-xs text-gray-500 mt-3">

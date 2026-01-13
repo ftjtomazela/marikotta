@@ -1,92 +1,130 @@
 import { NextResponse } from "next/server";
-import { MercadoPagoConfig, Preference } from "mercadopago";
 
 export async function POST(request: Request) {
   try {
-    // 1. Validação do Token
-    if (!process.env.MP_ACCESS_TOKEN) {
-      console.error("❌ Token do Mercado Pago (MP_ACCESS_TOKEN) não encontrado.");
+    const { items, frete, comprador, order_id } = await request.json();
+
+    // 1. Validação da Chave Secreta
+    if (!process.env.PAGARME_SECRET_KEY) {
+      console.error("❌ PAGARME_SECRET_KEY não configurada.");
       return NextResponse.json({ error: "Configuração de pagamento incompleta" }, { status: 500 });
     }
 
-    // 2. Definição da URL Base (A Correção do Erro)
-    // Tenta pegar da variável de ambiente, se não tiver, usa o link da Vercel hardcoded ou localhost
-    const baseUrl = process.env.NEXT_PUBLIC_URL 
-      ? process.env.NEXT_PUBLIC_URL 
-      : process.env.VERCEL_URL 
-        ? `https://${process.env.VERCEL_URL}` 
-        : "http://localhost:3000";
-
-    console.log("🔗 URL Base para retorno:", baseUrl); // Para debug no painel da Vercel
-
-    const client = new MercadoPagoConfig({ 
-      accessToken: process.env.MP_ACCESS_TOKEN 
-    });
-
-    const body = await request.json();
-    const { items, frete, order_id, comprador } = body;
-
-    // 3. Montagem dos Itens
-    const mpItems = items.map((item: any) => ({
-      id: item.id,
-      title: item.title,
+    // 2. Formatar Itens para Pagar.me (Valor em centavos - Inteiro)
+    const pagarmeItems = items.map((item: any) => ({
+      amount: Math.round(Number(item.price) * 100), // Converte R$ 10,00 para 1000 centavos
+      description: item.title,
       quantity: Number(item.quantity),
-      unit_price: Number(item.price),
-      currency_id: "BRL",
-      description: item.description || "Produto Marikota",
-      category_id: "fashion",
+      code: String(item.id).substring(0, 50)
     }));
 
+    // Adiciona Frete como item se houver valor
     if (frete && Number(frete) > 0) {
-      mpItems.push({
-        id: "frete",
-        title: "Frete de Envio",
+      pagarmeItems.push({
+        amount: Math.round(Number(frete) * 100),
+        description: "Frete de Envio",
         quantity: 1,
-        unit_price: Number(frete),
-        currency_id: "BRL",
+        code: "FRETE"
       });
     }
 
-    // 4. Criação da Preferência
-    const preference = new Preference(client);
-    
-    const result = await preference.create({
-      body: {
-        items: mpItems,
-        payer: {
-          name: comprador?.nome?.split(" ")[0] || "Cliente",
-          surname: comprador?.nome?.split(" ").slice(1).join(" ") || "Marikota",
-          email: comprador?.email || "email@teste.com",
-          phone: {
-            area_code: "11",
-            number: comprador?.celular?.replace(/\D/g, "") || "999999999",
-          },
-        },
-        external_reference: order_id ? String(order_id) : `TEMP-${Date.now()}`,
-        
-        // AQUI ESTÁ O SEGREDO: URLs completas e garantidas
-        back_urls: {
-          success: `${baseUrl}/sucesso`,
-          failure: `${baseUrl}/checkout`,
-          pending: `${baseUrl}/checkout`,
-        },
-        auto_return: "approved", // Isso exige que o success acima exista!
-        
-        statement_descriptor: "MARIKOTA",
-        payment_methods: {
-          excluded_payment_types: [{ id: "ticket" }], // Remove boleto (opcional)
-          installments: 6
+    // 3. Formatar Telefones (Pagar.me V5 exige formato rigoroso)
+    const rawPhone = comprador.celular?.replace(/\D/g, "") || "11999999999";
+    const ddd = rawPhone.substring(0, 2);
+    const number = rawPhone.substring(2);
+
+    // 4. Montar Payload do Pedido Pagar.me V5
+    const payload = {
+      customer: {
+        name: comprador.nome,
+        email: comprador.email,
+        document: comprador.cpf.replace(/\D/g, ""), // CPF Limpo
+        type: "individual",
+        phones: {
+          mobile_phone: {
+            country_code: "55",
+            area_code: ddd,
+            number: number
+          }
         }
+      },
+      items: pagarmeItems,
+      shipping: {
+        amount: Math.round(Number(frete) * 100),
+        description: "Entrega Loja",
+        recipient_name: comprador.nome,
+        address: {
+          line_1: `${comprador.rua}, ${comprador.numero}`,
+          line_2: comprador.complemento || "",
+          zip_code: comprador.cep?.replace(/\D/g, ""),
+          city: comprador.cidade,
+          state: comprador.estado || "SP",
+          country: "BR"
+        }
+      },
+      // --- AQUI ESTÁ A CONFIGURAÇÃO DO PAGAMENTO ---
+      checkout: {
+        expires_in: 120, // Link expira em 120 minutos
+        billing_address_editable: false,
+        customer_editable: true,
+        // Define quais métodos o cliente pode escolher
+        accepted_payment_methods: ["credit_card", "pix", "boleto"],
+        
+        // Redirecionamento após sucesso
+        success_url: `${process.env.NEXT_PUBLIC_URL || "http://localhost:3000"}/sucesso`,
+        skip_checkout_success_page: false,
+
+        // CONFIGURAÇÃO DE PARCELAMENTO (3x Sem Juros)
+        credit_card: {
+            authentication: {
+                type: "threed_secure", // Segurança extra (3DS)
+            },
+            installments: {
+                enabled: true,
+                max_installments: 3, // O cliente só consegue parcelar em até 3x
+                free_installments: 3 // Até 3x o lojista assume os juros (Sem juros pro cliente)
+                // Se o cliente tentar parcelar em 4x (se você aumentar o max), ele pagaria juros a partir da 4ª.
+            }
+        },
+        // Configuração do PIX (Opcional, define tempo de expiração do código Pix)
+        pix: {
+            expires_in: 3600 // Código Pix vale por 1 hora
+        }
+      },
+      metadata: {
+        internal_order_id: order_id
       }
+    };
+
+    // 5. Chamada à API da Pagar.me V5
+    const response = await fetch("https://api.pagar.me/core/v5/orders", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Basic ${Buffer.from(process.env.PAGARME_SECRET_KEY + ":").toString("base64")}`
+      },
+      body: JSON.stringify(payload)
     });
 
-    return NextResponse.json({ url: result.init_point });
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("❌ Erro Pagar.me:", JSON.stringify(data, null, 2));
+      const errorMsg = data.message || "Erro ao criar pedido na Pagar.me";
+      return NextResponse.json({ error: errorMsg }, { status: 400 });
+    }
+
+    // 6. Retorna a URL de Checkout
+    const checkoutUrl = data.checkouts?.[0]?.payment_url;
+
+    if (!checkoutUrl) {
+      return NextResponse.json({ error: "URL de pagamento não gerada pela Pagar.me" }, { status: 500 });
+    }
+
+    return NextResponse.json({ url: checkoutUrl });
 
   } catch (error: any) {
-    console.error("❌ Erro Mercado Pago:", error);
-    return NextResponse.json(
-      { error: "Erro ao criar pagamento", details: error.message }, 
-      { status: 500 }
-    );
+    console.error("❌ Erro Interno:", error);
+    return NextResponse.json({ error: "Erro interno no servidor" }, { status: 500 });
   }
 }

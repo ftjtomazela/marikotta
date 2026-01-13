@@ -17,9 +17,6 @@ export default function Home() {
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   const [trackingCode, setTrackingCode] = useState("");
 
-  // --- CORREÇÃO: Removi o código quebrado que estava aqui ---
-  // O <ShippingCalculator> foi movido para a linha 186 (dentro da Sidebar)
-
   const whatsappNumber = "5515981851484";
   const whatsappMsg = "Olá! Vim pelo site e gostaria de tirar uma dúvida.";
 
@@ -251,14 +248,25 @@ export default function Home() {
                         </div>
                     </Link>
                     <div className="mt-auto px-1 pt-2 border-t border-gray-50">
-                        <div className="flex justify-between items-end mb-3">
-                            <div>
-                            <p className="text-xs text-gray-300 line-through font-medium">R$ {(product.price * 1.2).toFixed(2)}</p>
+                        {/* --- ATUALIZAÇÃO DE PREÇOS AQUI --- */}
+                        <div className="flex flex-col mb-3 text-center sm:text-left">
+                            {/* Preço Normal */}
                             <p className="text-lg font-bold text-gray-900">
                                 {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(product.price)}
                             </p>
-                            </div>
+                            
+                            {/* Preço Pix (-5%) */}
+                            <p className="text-sm font-bold text-pink-600">
+                                {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(product.price * 0.95)}
+                                <span className="text-xs font-normal text-gray-500 ml-1">com Pix</span>
+                            </p>
+
+                            {/* Parcelamento 3x sem juros */}
+                            <p className="text-[10px] text-gray-400 mt-0.5">
+                                3x de {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(product.price / 3)} sem juros
+                            </p>
                         </div>
+                        {/* --- FIM ATUALIZAÇÃO --- */}
                         <AddToCartButton product={product} />
                     </div>
                     </div>
@@ -351,16 +359,16 @@ export default function Home() {
               <h4 className="font-bold text-gray-900 mb-4">Site 100% Seguro</h4>
               <div className="flex gap-3 items-center">
                  <div className="bg-gray-50 border border-gray-100 rounded px-2 py-1 flex items-center gap-1">
-                    <i className="fa-solid fa-lock text-green-600"></i>
-                    <div className="text-[10px] leading-tight text-gray-500 font-bold uppercase">
-                      Ambiente<br/>Seguro
-                    </div>
+                   <i className="fa-solid fa-lock text-green-600"></i>
+                   <div className="text-[10px] leading-tight text-gray-500 font-bold uppercase">
+                     Ambiente<br/>Seguro
+                   </div>
                  </div>
                  <div className="bg-gray-50 border border-gray-100 rounded px-2 py-1 flex items-center gap-1">
-                    <i className="fa-brands fa-google text-blue-500"></i>
-                    <div className="text-[10px] leading-tight text-gray-500 font-bold uppercase">
-                      Google<br/>Safe
-                    </div>
+                   <i className="fa-brands fa-google text-blue-500"></i>
+                   <div className="text-[10px] leading-tight text-gray-500 font-bold uppercase">
+                     Google<br/>Safe
+                   </div>
                  </div>
               </div>
             </div>

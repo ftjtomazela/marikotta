@@ -16,9 +16,10 @@ interface CartContextType {
   items: CartItem[];
   addToCart: (product: any) => void;
   removeFromCart: (id: string) => void;
+  updateQuantity: (id: string, quantity: number) => void; // <--- Adicionado aqui
   clearCart: () => void;
   cartTotal: number;
-  // <--- NOVAS FUNÇÕES PARA O FRETE
+  // NOVAS FUNÇÕES PARA O FRETE
   shippingCost: number;
   shippingType: string;
   addShippingCost: (cost: number, type: string) => void;
@@ -30,7 +31,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [mounted, setMounted] = useState(false);
   
-  // <--- NOVO ESTADO DO FRETE
+  // NOVO ESTADO DO FRETE
   const [shippingCost, setShippingCost] = useState(0);
   const [shippingType, setShippingType] = useState("");
 
@@ -66,13 +67,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setItems((prev) => prev.filter((item) => item.id !== id));
   };
 
+  // --- FUNÇÃO DE ATUALIZAR QUANTIDADE (Corrigida e no lugar certo) ---
+  const updateQuantity = (id: string, quantity: number) => {
+    setItems((prevItems) =>
+      prevItems.map((item) =>
+        item.id === id ? { ...item, quantity: Math.max(1, quantity) } : item
+      )
+    );
+  };
+
   const clearCart = () => {
     setItems([]);
-    setShippingCost(0); // Limpa o frete também
+    setShippingCost(0);
     setShippingType("");
   };
 
-  // <--- NOVA FUNÇÃO PARA DEFINIR FRETE
+  // NOVA FUNÇÃO PARA DEFINIR FRETE
   const addShippingCost = (cost: number, type: string) => {
     setShippingCost(cost);
     setShippingType(type);
@@ -89,10 +99,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
       value={{ 
         items, 
         addToCart, 
-        removeFromCart, 
+        removeFromCart,
+        updateQuantity, // <--- Exportando a função para ser usada nas páginas
         clearCart, 
         cartTotal,
-        // Exportando as novidades
         shippingCost,
         shippingType,
         addShippingCost
